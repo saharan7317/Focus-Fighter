@@ -1,0 +1,524 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>FOCUS FIGHTER - CUSTOM AUDIO FIX</title>
+  <style>
+    body { margin: 0; background: #000; display: flex; justify-content: center; align-items: center; height: 100vh; color: #33ff00; font-family: 'Courier New', monospace; overflow: hidden; }
+    
+    #app-wrapper { display: flex; gap: 20px; align-items: stretch; }
+
+    #game-container { position: relative; width: 800px; height: 600px; border: 4px solid #33ff00; background: #050505; overflow: hidden; box-shadow: 0 0 50px rgba(51, 255, 0, 0.1); }
+    canvas { width: 100%; height: 100%; }
+    
+    #boot-screen { position: absolute; inset: 0; background: #000; z-index: 300; display: flex; flex-direction: column; justify-content: center; align-items: center; text-align: center; }
+    .start-btn { background: #33ff00; color: black; border: none; padding: 20px 40px; font-weight: 900; cursor: pointer; font-size: 1.8rem; text-transform: uppercase; letter-spacing: 2px; box-shadow: 0 0 20px #33ff00; transition: 0.2s; }
+    .start-btn:hover { background: #fff; box-shadow: 0 0 40px #fff; }
+    #status-text { margin-top: 20px; color: #fff; font-size: 1.2rem; }
+    
+    #pip-btn { position: absolute; bottom: 15px; right: 15px; z-index: 100; background: #33ff00; border: none; padding: 8px 15px; cursor: pointer; font-weight: bold; display: none; }
+
+    #side-panel { width: 290px; border: 4px solid #33ff00; background: #0a0a0a; padding: 15px; box-sizing: border-box; display: flex; flex-direction: column; gap: 10px; overflow-y: auto; }
+    #side-panel h2 { margin: 0 0 5px 0; font-size: 1.2rem; text-align: center; border-bottom: 2px dashed #33ff00; padding-bottom: 10px; }
+    
+    .sound-btn { background: #000; color: #33ff00; border: 2px solid #33ff00; padding: 10px; font-family: 'Courier New', monospace; font-weight: bold; font-size: 0.9rem; cursor: pointer; transition: 0.2s; text-align: center; text-transform: uppercase; }
+    .sound-btn:hover:not(:disabled) { background: rgba(51, 255, 0, 0.2); }
+    .sound-btn.active { background: #33ff00; color: #000; box-shadow: 0 0 10px #33ff00; }
+
+    #custom-sounds-list { display: flex; flex-direction: column; gap: 5px; margin-top: 5px; margin-bottom: 5px; }
+    .custom-item { display: flex; gap: 5px; }
+    .custom-item .sound-btn { flex-grow: 1; text-transform: none; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 195px; }
+    .remove-btn { background: #300; color: #f55; border: 2px solid #f55; font-weight: bold; cursor: pointer; width: 35px; transition: 0.2s; }
+    .remove-btn:hover { background: #f55; color: #000; box-shadow: 0 0 10px #f55; }
+
+    .upload-btn { background: #111; border-style: dashed; margin-top: 5px; }
+    .upload-btn:disabled { border-color: #555; color: #555; cursor: not-allowed; }
+
+    .slider-container { margin-top: auto; border-top: 2px dashed #33ff00; padding-top: 15px; }
+    .slider-container label { display: block; margin-bottom: 8px; font-weight: bold; font-size: 0.9rem; }
+    input[type=range] { width: 100%; cursor: pointer; accent-color: #33ff00; }
+  </style>
+</head>
+<body>
+
+  <div id="app-wrapper">
+    <div id="game-container">
+      <div id="boot-screen">
+        <h1 style="font-size: 3rem; margin-bottom: 10px;">[ HARDCORE MODE ]</h1>
+        <button class="start-btn" id="start-btn" onclick="bootSystem()">ENGAGE TRACKER</button>
+        <div id="status-text">Awaiting Pilot...</div>
+      </div>
+
+      <button id="pip-btn" onclick="togglePiP()">GO MINI</button>
+
+      <video id="webcam" autoplay playsinline style="display:none;"></video>
+      <video id="pip_video" autoplay playsinline style="display:none;"></video>
+      <canvas id="game_canvas" width="800" height="600"></canvas>
+    </div>
+
+    <div id="side-panel">
+      <h2>DAMAGE AUDIO</h2>
+      <button class="sound-btn active" id="btn-cyber" onclick="setSound('cyber')">Cyber Buzz</button>
+      <button class="sound-btn" id="btn-8bit" onclick="setSound('8bit')">Retro 8-Bit</button>
+      <button class="sound-btn" id="btn-boing" onclick="setSound('boing')">Cartoon Boing</button>
+      <button class="sound-btn" id="btn-siren" onclick="setSound('siren')">Warning Siren</button>
+
+      <div id="custom-sounds-list"></div>
+
+      <input type="file" id="custom-audio-upload" accept="audio/mp3, audio/wav, audio/ogg" style="display: none;" onchange="handleAudioUpload(event)">
+      <button class="sound-btn upload-btn" id="btn-upload" onclick="document.getElementById('custom-audio-upload').click()">+ UPLOAD CUSTOM (0/5)</button>
+
+      <div class="slider-container">
+        <label for="speed-slider">BEEP DELAY: <span id="speed-val">500ms</span></label>
+        <input type="range" id="speed-slider" min="100" max="1500" step="50" value="500">
+        <div style="display: flex; justify-content: space-between; font-size: 0.7rem; color: #888; margin-top: 5px;">
+          <span>FAST</span>
+          <span>SLOW</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/pose/pose.js"></script>
+
+  <script>
+    const video = document.getElementById('webcam');
+    const pipVideo = document.getElementById('pip_video');
+    const canvas = document.getElementById('game_canvas');
+    const ctx = canvas.getContext('2d');
+    const bootScreen = document.getElementById('boot-screen');
+    const statusText = document.getElementById('status-text');
+    const pipBtn = document.getElementById('pip-btn');
+    const startBtn = document.getElementById('start-btn');
+    const uploadBtn = document.getElementById('btn-upload');
+    const customList = document.getElementById('custom-sounds-list');
+    
+    const speedSlider = document.getElementById('speed-slider');
+    const speedVal = document.getElementById('speed-val');
+
+    let focusLevel = 100, isGameOver = false, isCalibrated = false;
+    let safeGap = 0, safeWidth = 0, survivalSeconds = 0, difficulty = 1;
+    let audioCtx, masterGain;
+    let damageReason = ""; 
+    
+    let lastFrameTime = performance.now();
+    let lastAlarmTime = 0; 
+    let resetCountdown = 3.0;
+    
+    let currentSound = 'cyber';
+    let customAudioLibrary = []; 
+
+    speedSlider.oninput = function() {
+        speedVal.innerText = this.value + "ms";
+    }
+
+    pipVideo.srcObject = canvas.captureStream();
+    async function togglePiP() {
+        if (document.pictureInPictureElement) await document.exitPictureInPicture();
+        else await pipVideo.requestPictureInPicture();
+    }
+
+    function updateCustomUI() {
+        customList.innerHTML = '';
+        
+        customAudioLibrary.forEach(sound => {
+            const wrapper = document.createElement('div');
+            wrapper.className = 'custom-item';
+            
+            const playBtn = document.createElement('button');
+            playBtn.className = `sound-btn ${currentSound === sound.id ? 'active' : ''}`;
+            playBtn.id = `btn-${sound.id}`;
+            playBtn.innerText = sound.name;
+            playBtn.title = sound.name; 
+            playBtn.onclick = () => setSound(sound.id);
+            
+            const rmBtn = document.createElement('button');
+            rmBtn.className = 'remove-btn';
+            rmBtn.innerText = 'X';
+            rmBtn.title = 'Remove Audio';
+            rmBtn.onclick = () => removeCustomSound(sound.id);
+            
+            wrapper.appendChild(playBtn);
+            wrapper.appendChild(rmBtn);
+            customList.appendChild(wrapper);
+        });
+
+        uploadBtn.innerText = `+ UPLOAD CUSTOM (${customAudioLibrary.length}/5)`;
+        if (customAudioLibrary.length >= 5) {
+            uploadBtn.disabled = true;
+        } else {
+            uploadBtn.disabled = false;
+        }
+    }
+
+    function removeCustomSound(id) {
+        customAudioLibrary = customAudioLibrary.filter(s => s.id !== id);
+        if (currentSound === id) {
+            setSound('cyber');
+        } else {
+            updateCustomUI(); 
+        }
+    }
+
+    function setSound(id) {
+        currentSound = id;
+        document.querySelectorAll('.sound-btn').forEach(btn => btn.classList.remove('active'));
+        
+        const activeBtn = document.getElementById('btn-' + id);
+        if(activeBtn) activeBtn.classList.add('active');
+        
+        if (audioCtx) playAlarm("normal"); 
+    }
+
+    async function handleAudioUpload(event) {
+        const file = event.target.files[0];
+        if (!file) return;
+
+        if (customAudioLibrary.length >= 5) {
+            alert("Maximum 5 custom sounds reached. Please remove one first.");
+            return;
+        }
+
+        if (!audioCtx) {
+            audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+            masterGain = audioCtx.createGain();
+            masterGain.gain.value = 1.0;
+            masterGain.connect(audioCtx.destination);
+        }
+
+        const arrayBuffer = await file.arrayBuffer();
+        const decodedBuffer = await audioCtx.decodeAudioData(arrayBuffer);
+
+        const soundId = 'custom_' + Date.now();
+        
+        customAudioLibrary.push({
+            id: soundId,
+            name: file.name,
+            buffer: decodedBuffer
+        });
+
+        event.target.value = '';
+        updateCustomUI();
+        setSound(soundId);
+    }
+
+    const pose = new Pose({ locateFile: (f) => `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${f}` });
+    pose.setOptions({ modelComplexity: 1, minDetectionConfidence: 0.5, minTrackingConfidence: 0.5 });
+    pose.onResults(onPoseResults);
+
+    async function bootSystem() {
+        startBtn.style.display = "none";
+        statusText.innerText = "Initializing Audio Engine...";
+        
+        if (!audioCtx) {
+            audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+            masterGain = audioCtx.createGain();
+            masterGain.gain.value = 1.0;
+            masterGain.connect(audioCtx.destination);
+        }
+
+        statusText.innerText = "Accessing Optical Sensors...";
+        try {
+            const stream = await navigator.mediaDevices.getUserMedia({ video: { width: 800, height: 600 } });
+            video.srcObject = stream;
+            
+            video.onloadeddata = async () => {
+                statusText.innerText = "Downloading Precision Tracking Model...";
+                await pose.initialize();
+                
+                predictWebcam();
+                
+                statusText.innerText = "System Ready! Locking Posture in 3...";
+                setTimeout(() => statusText.innerText = "Locking Posture in 2...", 1000);
+                setTimeout(() => statusText.innerText = "Locking Posture in 1...", 2000);
+                setTimeout(() => {
+                    bootScreen.style.display = "none";
+                    pipBtn.style.display = "block"; 
+                    isCalibrated = true;
+                    lastFrameTime = performance.now(); 
+                    
+                    setInterval(() => { 
+                        if(!isGameOver) {
+                            survivalSeconds++;
+                            if(survivalSeconds % 20 === 0) difficulty += 0.3; 
+                        } 
+                    }, 1000);
+                }, 3000);
+            };
+        } catch (error) {
+            statusText.innerText = "ERROR: Camera Access Denied.";
+            statusText.style.color = "red";
+        }
+    }
+
+    async function predictWebcam() {
+        if (!video.paused && !video.ended) {
+            await pose.send({image: video});
+        }
+        window.requestAnimationFrame(predictWebcam);
+    }
+
+    function triggerAlarm(severity, currentTime) {
+        const beepDelay = parseInt(speedSlider.value, 10);
+        if (currentTime - lastAlarmTime > beepDelay) {
+            playAlarm(severity);
+            lastAlarmTime = currentTime;
+        }
+    }
+
+    function playAlarm(severity) {
+        if (!audioCtx) return;
+        const now = audioCtx.currentTime;
+
+        if (severity === "success") {
+            const osc = audioCtx.createOscillator();
+            const g = audioCtx.createGain();
+            osc.type = 'sine';
+            osc.frequency.setValueAtTime(400, now);
+            osc.frequency.exponentialRampToValueAtTime(800, now + 0.3);
+            g.gain.setValueAtTime(0.4, now);
+            g.gain.linearRampToValueAtTime(0.01, now + 0.3);
+            osc.connect(g); g.connect(masterGain);
+            osc.start(now); osc.stop(now + 0.5);
+            return;
+        }
+
+        // --- THE FIX: Custom Audio Playback Overlap ---
+        if (currentSound.startsWith('custom_')) {
+            const targetSound = customAudioLibrary.find(s => s.id === currentSound);
+            if (targetSound && targetSound.buffer) {
+                const source = audioCtx.createBufferSource();
+                source.buffer = targetSound.buffer;
+                const g = audioCtx.createGain();
+                
+                // Allow the sound to play for its natural length (capped at 0.8s for safety).
+                // This means fast 100ms triggers will beautifully overlap instead of cutting off!
+                const playDuration = Math.min(targetSound.buffer.duration, 0.8);
+                const fadeStart = now + playDuration - 0.1;
+                
+                g.gain.setValueAtTime(0.8, now);
+                g.gain.setValueAtTime(0.8, fadeStart);
+                g.gain.linearRampToValueAtTime(0.01, now + playDuration);
+                
+                source.connect(g);
+                g.connect(masterGain);
+                source.start(now);
+                source.stop(now + playDuration);
+                return;
+            }
+        }
+
+        const osc = audioCtx.createOscillator();
+        const g = audioCtx.createGain();
+
+        if (currentSound === 'cyber') {
+            osc.type = severity === "critical" ? 'sawtooth' : 'square';
+            osc.frequency.setValueAtTime(severity === "critical" ? 400 : 200, now);
+            osc.frequency.exponentialRampToValueAtTime(100, now + 0.1);
+            g.gain.setValueAtTime(0.3, now);
+            g.gain.linearRampToValueAtTime(0.01, now + 0.15);
+            osc.connect(g); g.connect(masterGain);
+            osc.start(now); osc.stop(now + 0.2);
+        } 
+        else if (currentSound === '8bit') {
+            osc.type = 'square';
+            osc.frequency.setValueAtTime(500, now);
+            osc.frequency.setValueAtTime(700, now + 0.05); 
+            osc.frequency.setValueAtTime(300, now + 0.1);
+            g.gain.setValueAtTime(0.3, now);
+            g.gain.linearRampToValueAtTime(0.01, now + 0.15);
+            osc.connect(g); g.connect(masterGain);
+            osc.start(now); osc.stop(now + 0.2);
+        }
+        else if (currentSound === 'boing') {
+            osc.type = 'sine';
+            osc.frequency.setValueAtTime(200, now);
+            osc.frequency.exponentialRampToValueAtTime(800, now + 0.1);
+            osc.frequency.exponentialRampToValueAtTime(100, now + 0.3);
+            g.gain.setValueAtTime(0.6, now);
+            g.gain.exponentialRampToValueAtTime(0.01, now + 0.3);
+            osc.connect(g); g.connect(masterGain);
+            osc.start(now); osc.stop(now + 0.35);
+        }
+        else if (currentSound === 'siren') {
+            osc.type = 'triangle';
+            osc.frequency.setValueAtTime(300, now);
+            osc.frequency.linearRampToValueAtTime(800, now + 0.15); 
+            g.gain.setValueAtTime(0.4, now);
+            g.gain.linearRampToValueAtTime(0.01, now + 0.2);
+            osc.connect(g); g.connect(masterGain);
+            osc.start(now); osc.stop(now + 0.25);
+        }
+    }
+
+    function onPoseResults(results) {
+        const now = performance.now();
+        let dt = (now - lastFrameTime) / 1000; 
+        if (dt > 0.1) dt = 0.1; 
+        lastFrameTime = now;
+
+        ctx.save();
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        ctx.translate(canvas.width, 0);
+        ctx.scale(-1, 1);
+        ctx.drawImage(results.image, 0, 0, canvas.width, canvas.height);
+        ctx.restore();
+
+        if (results.poseLandmarks) {
+            const nose = results.poseLandmarks[0];
+            const leftEar = results.poseLandmarks[7];
+            const rightEar = results.poseLandmarks[8];
+            const leftShoulder = results.poseLandmarks[11];
+            const rightShoulder = results.poseLandmarks[12];
+            
+            const earY = (leftEar.y + rightEar.y) / 2;
+            const shoulderY = (leftShoulder.y + rightShoulder.y) / 2;
+            const currentGap = shoulderY - earY; 
+            const currentWidth = Math.abs(leftShoulder.x - rightShoulder.x); 
+            
+            const leftDist = Math.abs(nose.x - leftEar.x);
+            const rightDist = Math.abs(nose.x - rightEar.x);
+            const isLookingAway = (leftDist > rightDist * 3.5) || (rightDist > leftDist * 3.5);
+
+            if (!isCalibrated) {
+                safeGap = currentGap;
+                safeWidth = currentWidth;
+                ctx.fillStyle = "#33ff00";
+                ctx.font = "bold 40px 'Courier New'";
+                ctx.fillText("SCANNING BIOMETRICS...", 50, 80);
+            } 
+            else if (!isGameOver) {
+                let isDamaged = false;
+
+                if (nose.visibility < 0.6) {
+                    focusLevel -= (35 * dt * difficulty); 
+                    damageReason = "PILOT NOT FOUND";
+                    triggerAlarm("critical", now);
+                    isDamaged = true;
+                } 
+                else if (currentWidth < (safeWidth * 0.75)) {
+                    focusLevel -= (25 * dt * difficulty);
+                    damageReason = "PILOT ABANDONED STATION";
+                    triggerAlarm("critical", now);
+                    isDamaged = true;
+                }
+                else if (isLookingAway) {
+                    focusLevel -= (20 * dt * difficulty);
+                    damageReason = "EYES OFF TARGET";
+                    triggerAlarm("normal", now);
+                    isDamaged = true;
+                }
+                else if (currentGap < (safeGap * 0.95)) { 
+                    focusLevel -= (15 * dt * difficulty); 
+                    damageReason = "POSTURE COMPROMISED";
+                    triggerAlarm("normal", now);
+                    isDamaged = true;
+                } 
+                else {
+                    if (focusLevel < 100) focusLevel += (15 * dt); 
+                }
+                
+                if (isDamaged) drawCrazyGlitch();
+                if (focusLevel <= 0) {
+                    isGameOver = true;
+                    resetCountdown = 3.0;
+                }
+                drawUI();
+
+            } else {
+                const isPerfectPosture = (nose.visibility > 0.8 && currentGap >= safeGap * 0.95 && !isLookingAway && currentWidth >= safeWidth * 0.75);
+                
+                if (isPerfectPosture) {
+                    resetCountdown -= dt; 
+                    if (resetCountdown <= 0) {
+                        playAlarm("success");
+                        isGameOver = false;
+                        focusLevel = 100;
+                        survivalSeconds = 0;
+                        difficulty = 1;
+                        resetCountdown = 3.0;
+                    }
+                } else {
+                    resetCountdown = 3.0;
+                }
+                
+                drawGameOver(isPerfectPosture, resetCountdown);
+            }
+        }
+    }
+
+    function drawUI() {
+        ctx.fillStyle = "rgba(0,0,0,0.85)";
+        ctx.fillRect(20, 20, 760, 60);
+        
+        ctx.fillStyle = focusLevel > 30 ? "#33ff00" : "#ff0000";
+        ctx.fillRect(30, 30, (focusLevel/100) * 450, 40);
+        
+        ctx.fillStyle = "white";
+        ctx.font = "900 28px 'Courier New'";
+        ctx.fillText(`TIME: ${survivalSeconds}s`, 510, 58);
+    }
+
+    function drawCrazyGlitch() {
+        ctx.save();
+        const shakeX = (Math.random() - 0.5) * 30;
+        const shakeY = (Math.random() - 0.5) * 30;
+        ctx.translate(shakeX, shakeY);
+
+        for(let i=0; i<15; i++) {
+            ctx.fillStyle = Math.random() > 0.5 ? "rgba(255, 0, 0, 0.4)" : "rgba(0, 255, 255, 0.3)";
+            ctx.fillRect(0, Math.random() * canvas.height, canvas.width, Math.random() * 20);
+        }
+
+        ctx.fillStyle = "rgba(150, 0, 0, 0.4)";
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+        ctx.fillStyle = "#fff";
+        ctx.font = "900 50px 'Courier New'";
+        ctx.textAlign = "center";
+        ctx.shadowColor = "red";
+        ctx.shadowBlur = 20;
+        ctx.fillText(damageReason, canvas.width/2, canvas.height/2 + (Math.random()*10-5));
+        
+        ctx.restore();
+    }
+
+    function drawGameOver(isPerfectPosture, countdown) {
+        ctx.fillStyle = "rgba(150, 0, 0, 0.90)";
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        
+        ctx.textAlign = "center";
+        ctx.fillStyle = "white";
+        ctx.font = "900 80px 'Courier New'";
+        ctx.shadowColor = "black";
+        ctx.shadowBlur = 15;
+        ctx.fillText("SYSTEM FAILURE", canvas.width/2, 200);
+        
+        ctx.font = "bold 35px 'Courier New'";
+        ctx.fillText(`SURVIVAL TIME: ${survivalSeconds}s`, canvas.width/2, 280);
+        
+        ctx.shadowBlur = 0;
+        
+        if (isPerfectPosture) {
+            const displayTime = Math.ceil(countdown); 
+            ctx.fillStyle = displayTime === 1 ? "#33ff00" : (displayTime === 2 ? "yellow" : "orange");
+            ctx.font = "900 60px 'Courier New'";
+            ctx.fillText(`REBOOTING IN: ${displayTime}`, canvas.width/2, 450);
+            
+            ctx.fillStyle = "white";
+            ctx.font = "bold 20px 'Courier New'";
+            ctx.fillText("HOLD ALIGNMENT... DO NOT MOVE", canvas.width/2, 500);
+        } else {
+            ctx.fillStyle = "#ff5555";
+            ctx.font = "900 35px 'Courier New'";
+            ctx.fillText("RESUME CORRECT POSTURE", canvas.width/2, 450);
+            
+            ctx.fillStyle = "white";
+            ctx.font = "bold 25px 'Courier New'";
+            ctx.fillText("TO INITIATE REBOOT SEQUENCE", canvas.width/2, 490);
+        }
+        
+        ctx.textAlign = "left";
+    }
+  </script>
+</body>
+</html>

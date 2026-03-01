@@ -1,0 +1,328 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>FOCUS FIGHTER - HARDCORE MODE</title>
+  <style>
+    body { margin: 0; background: #000; display: flex; justify-content: center; align-items: center; height: 100vh; color: #33ff00; font-family: 'Courier New', monospace; overflow: hidden; }
+    #game-container { position: relative; width: 800px; height: 600px; border: 4px solid #33ff00; background: #050505; overflow: hidden; box-shadow: 0 0 50px rgba(51, 255, 0, 0.1); }
+    canvas { width: 100%; height: 100%; }
+    
+    #boot-screen { position: absolute; inset: 0; background: #000; z-index: 300; display: flex; flex-direction: column; justify-content: center; align-items: center; text-align: center; }
+    .start-btn { background: #33ff00; color: black; border: none; padding: 20px 40px; font-weight: 900; cursor: pointer; font-size: 1.8rem; text-transform: uppercase; letter-spacing: 2px; box-shadow: 0 0 20px #33ff00; transition: 0.2s; }
+    .start-btn:hover { background: #fff; box-shadow: 0 0 40px #fff; }
+    #status-text { margin-top: 20px; color: #fff; font-size: 1.2rem; }
+    
+    #pip-btn { position: absolute; bottom: 15px; right: 15px; z-index: 100; background: #33ff00; border: none; padding: 8px 15px; cursor: pointer; font-weight: bold; display: none; }
+  </style>
+</head>
+<body>
+
+  <div id="game-container">
+    <div id="boot-screen">
+      <h1 style="font-size: 3rem; margin-bottom: 10px;">[ HARDCORE MODE ]</h1>
+      <button class="start-btn" id="start-btn" onclick="bootSystem()">ENGAGE TRACKER</button>
+      <div id="status-text">Awaiting Pilot...</div>
+    </div>
+
+    <button id="pip-btn" onclick="togglePiP()">GO MINI</button>
+
+    <video id="webcam" autoplay playsinline style="display:none;"></video>
+    <video id="pip_video" autoplay playsinline style="display:none;"></video>
+    <canvas id="game_canvas" width="800" height="600"></canvas>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/pose/pose.js"></script>
+
+  <script>
+    const video = document.getElementById('webcam');
+    const pipVideo = document.getElementById('pip_video');
+    const canvas = document.getElementById('game_canvas');
+    const ctx = canvas.getContext('2d');
+    const bootScreen = document.getElementById('boot-screen');
+    const statusText = document.getElementById('status-text');
+    const pipBtn = document.getElementById('pip-btn');
+    const startBtn = document.getElementById('start-btn');
+
+    let focusLevel = 100, isGameOver = false, isCalibrated = false;
+    let safeGap = 0, safeWidth = 0, survivalSeconds = 0, difficulty = 1;
+    let audioCtx, masterGain;
+    let damageReason = ""; 
+    
+    // NEW: Timing variables for smooth damage and audio cooldown
+    let lastFrameTime = performance.now();
+    let lastAlarmTime = 0; 
+    let resetCountdown = 3.0;
+
+    pipVideo.srcObject = canvas.captureStream();
+    async function togglePiP() {
+        if (document.pictureInPictureElement) await document.exitPictureInPicture();
+        else await pipVideo.requestPictureInPicture();
+    }
+
+    const pose = new Pose({ locateFile: (f) => `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${f}` });
+    pose.setOptions({ modelComplexity: 1, minDetectionConfidence: 0.5, minTrackingConfidence: 0.5 });
+    pose.onResults(onPoseResults);
+
+    async function bootSystem() {
+        startBtn.style.display = "none";
+        statusText.innerText = "Initializing Audio Engine...";
+        audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        masterGain = audioCtx.createGain();
+        masterGain.gain.value = 1.0;
+        masterGain.connect(audioCtx.destination);
+
+        statusText.innerText = "Accessing Optical Sensors...";
+        try {
+            const stream = await navigator.mediaDevices.getUserMedia({ video: { width: 800, height: 600 } });
+            video.srcObject = stream;
+            
+            video.onloadeddata = async () => {
+                statusText.innerText = "Downloading Precision Tracking Model...";
+                await pose.initialize();
+                
+                predictWebcam();
+                
+                statusText.innerText = "System Ready! Locking Posture in 3...";
+                setTimeout(() => statusText.innerText = "Locking Posture in 2...", 1000);
+                setTimeout(() => statusText.innerText = "Locking Posture in 1...", 2000);
+                setTimeout(() => {
+                    bootScreen.style.display = "none";
+                    pipBtn.style.display = "block"; 
+                    isCalibrated = true;
+                    lastFrameTime = performance.now(); // Reset timer right before game starts
+                    
+                    setInterval(() => { 
+                        if(!isGameOver) {
+                            survivalSeconds++;
+                            if(survivalSeconds % 20 === 0) difficulty += 0.3; 
+                        } 
+                    }, 1000);
+                }, 3000);
+            };
+        } catch (error) {
+            statusText.innerText = "ERROR: Camera Access Denied.";
+            statusText.style.color = "red";
+        }
+    }
+
+    async function predictWebcam() {
+        if (!video.paused && !video.ended) {
+            await pose.send({image: video});
+        }
+        window.requestAnimationFrame(predictWebcam);
+    }
+
+    // NEW: Audio Cooldown Logic
+    function triggerAlarm(severity, currentTime) {
+        // Only allow a beep every 500 milliseconds (half a second)
+        if (currentTime - lastAlarmTime > 500) {
+            playAlarm(severity);
+            lastAlarmTime = currentTime;
+        }
+    }
+
+    function playAlarm(severity) {
+        if (!audioCtx) return;
+        const osc = audioCtx.createOscillator();
+        const g = audioCtx.createGain();
+        
+        if (severity === "critical") {
+            osc.type = 'sawtooth';
+            osc.frequency.setValueAtTime(400, audioCtx.currentTime); // Lower pitch, less annoying
+            osc.frequency.exponentialRampToValueAtTime(100, audioCtx.currentTime + 0.2);
+            g.gain.setValueAtTime(0.6, audioCtx.currentTime); // Quieter
+        } else if (severity === "success") {
+            osc.type = 'sine';
+            osc.frequency.setValueAtTime(400, audioCtx.currentTime);
+            osc.frequency.exponentialRampToValueAtTime(800, audioCtx.currentTime + 0.3);
+            g.gain.setValueAtTime(0.4, audioCtx.currentTime);
+        } else {
+            osc.type = 'square';
+            osc.frequency.setValueAtTime(200, audioCtx.currentTime);
+            osc.frequency.exponentialRampToValueAtTime(100, audioCtx.currentTime + 0.1);
+            g.gain.setValueAtTime(0.3, audioCtx.currentTime); // Much quieter
+        }
+        
+        g.gain.linearRampToValueAtTime(0.01, audioCtx.currentTime + (severity === "success" ? 0.3 : 0.15));
+        osc.connect(g);
+        g.connect(masterGain);
+        osc.start();
+        osc.stop(audioCtx.currentTime + 0.5);
+    }
+
+    function onPoseResults(results) {
+        // NEW: Calculate true Delta Time (dt) for smooth, fair damage
+        const now = performance.now();
+        let dt = (now - lastFrameTime) / 1000; 
+        if (dt > 0.1) dt = 0.1; // Cap at 0.1s to prevent huge damage spikes if you switch tabs
+        lastFrameTime = now;
+
+        ctx.save();
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        
+        ctx.translate(canvas.width, 0);
+        ctx.scale(-1, 1);
+        ctx.drawImage(results.image, 0, 0, canvas.width, canvas.height);
+        ctx.restore();
+
+        if (results.poseLandmarks) {
+            const nose = results.poseLandmarks[0];
+            const leftEar = results.poseLandmarks[7];
+            const rightEar = results.poseLandmarks[8];
+            const leftShoulder = results.poseLandmarks[11];
+            const rightShoulder = results.poseLandmarks[12];
+            
+            const earY = (leftEar.y + rightEar.y) / 2;
+            const shoulderY = (leftShoulder.y + rightShoulder.y) / 2;
+            const currentGap = shoulderY - earY; 
+            const currentWidth = Math.abs(leftShoulder.x - rightShoulder.x); 
+            
+            const leftDist = Math.abs(nose.x - leftEar.x);
+            const rightDist = Math.abs(nose.x - rightEar.x);
+            const isLookingAway = (leftDist > rightDist * 3.5) || (rightDist > leftDist * 3.5);
+
+            if (!isCalibrated) {
+                safeGap = currentGap;
+                safeWidth = currentWidth;
+                ctx.fillStyle = "#33ff00";
+                ctx.font = "bold 40px 'Courier New'";
+                ctx.fillText("SCANNING BIOMETRICS...", 50, 80);
+            } 
+            else if (!isGameOver) {
+                let isDamaged = false;
+
+                // NEW: Damage is now per SECOND, not per frame. 
+                // e.g. "30 * dt" means you lose 30 points per second.
+                if (nose.visibility < 0.6) {
+                    focusLevel -= (35 * dt * difficulty); 
+                    damageReason = "PILOT NOT FOUND";
+                    triggerAlarm("critical", now);
+                    isDamaged = true;
+                } 
+                else if (currentWidth < (safeWidth * 0.75)) {
+                    focusLevel -= (25 * dt * difficulty);
+                    damageReason = "PILOT ABANDONED STATION";
+                    triggerAlarm("critical", now);
+                    isDamaged = true;
+                }
+                else if (isLookingAway) {
+                    focusLevel -= (20 * dt * difficulty);
+                    damageReason = "EYES OFF TARGET";
+                    triggerAlarm("normal", now);
+                    isDamaged = true;
+                }
+                else if (currentGap < (safeGap * 0.95)) { 
+                    focusLevel -= (15 * dt * difficulty); // Takes about 6.5 seconds to die from slouching
+                    damageReason = "POSTURE COMPROMISED";
+                    triggerAlarm("normal", now);
+                    isDamaged = true;
+                } 
+                else {
+                    if (focusLevel < 100) focusLevel += (15 * dt); // Heal 15 points per second when sitting right
+                }
+                
+                if (isDamaged) drawCrazyGlitch();
+                if (focusLevel <= 0) {
+                    isGameOver = true;
+                    resetCountdown = 3.0;
+                }
+                drawUI();
+
+            } else {
+                const isPerfectPosture = (nose.visibility > 0.8 && currentGap >= safeGap * 0.95 && !isLookingAway && currentWidth >= safeWidth * 0.75);
+                
+                if (isPerfectPosture) {
+                    resetCountdown -= dt; 
+                    if (resetCountdown <= 0) {
+                        playAlarm("success");
+                        isGameOver = false;
+                        focusLevel = 100;
+                        survivalSeconds = 0;
+                        difficulty = 1;
+                        resetCountdown = 3.0;
+                    }
+                } else {
+                    resetCountdown = 3.0;
+                }
+                
+                drawGameOver(isPerfectPosture, resetCountdown);
+            }
+        }
+    }
+
+    function drawUI() {
+        ctx.fillStyle = "rgba(0,0,0,0.85)";
+        ctx.fillRect(20, 20, 760, 60);
+        
+        ctx.fillStyle = focusLevel > 30 ? "#33ff00" : "#ff0000";
+        ctx.fillRect(30, 30, (focusLevel/100) * 450, 40);
+        
+        ctx.fillStyle = "white";
+        ctx.font = "900 28px 'Courier New'";
+        ctx.fillText(`TIME: ${survivalSeconds}s`, 510, 58);
+    }
+
+    function drawCrazyGlitch() {
+        ctx.save();
+        const shakeX = (Math.random() - 0.5) * 30;
+        const shakeY = (Math.random() - 0.5) * 30;
+        ctx.translate(shakeX, shakeY);
+
+        for(let i=0; i<15; i++) {
+            ctx.fillStyle = Math.random() > 0.5 ? "rgba(255, 0, 0, 0.4)" : "rgba(0, 255, 255, 0.3)";
+            ctx.fillRect(0, Math.random() * canvas.height, canvas.width, Math.random() * 20);
+        }
+
+        ctx.fillStyle = "rgba(150, 0, 0, 0.4)";
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+        ctx.fillStyle = "#fff";
+        ctx.font = "900 50px 'Courier New'";
+        ctx.textAlign = "center";
+        ctx.shadowColor = "red";
+        ctx.shadowBlur = 20;
+        ctx.fillText(damageReason, canvas.width/2, canvas.height/2 + (Math.random()*10-5));
+        
+        ctx.restore();
+    }
+
+    function drawGameOver(isPerfectPosture, countdown) {
+        ctx.fillStyle = "rgba(150, 0, 0, 0.90)";
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        
+        ctx.textAlign = "center";
+        ctx.fillStyle = "white";
+        ctx.font = "900 80px 'Courier New'";
+        ctx.shadowColor = "black";
+        ctx.shadowBlur = 15;
+        ctx.fillText("SYSTEM FAILURE", canvas.width/2, 200);
+        
+        ctx.font = "bold 35px 'Courier New'";
+        ctx.fillText(`SURVIVAL TIME: ${survivalSeconds}s`, canvas.width/2, 280);
+        
+        ctx.shadowBlur = 0;
+        
+        if (isPerfectPosture) {
+            const displayTime = Math.ceil(countdown); 
+            ctx.fillStyle = displayTime === 1 ? "#33ff00" : (displayTime === 2 ? "yellow" : "orange");
+            ctx.font = "900 60px 'Courier New'";
+            ctx.fillText(`REBOOTING IN: ${displayTime}`, canvas.width/2, 450);
+            
+            ctx.fillStyle = "white";
+            ctx.font = "bold 20px 'Courier New'";
+            ctx.fillText("HOLD ALIGNMENT... DO NOT MOVE", canvas.width/2, 500);
+        } else {
+            ctx.fillStyle = "#ff5555";
+            ctx.font = "900 35px 'Courier New'";
+            ctx.fillText("RESUME CORRECT POSTURE", canvas.width/2, 450);
+            
+            ctx.fillStyle = "white";
+            ctx.font = "bold 25px 'Courier New'";
+            ctx.fillText("TO INITIATE REBOOT SEQUENCE", canvas.width/2, 490);
+        }
+        
+        ctx.textAlign = "left";
+    }
+  </script>
+</body>
+</html>
