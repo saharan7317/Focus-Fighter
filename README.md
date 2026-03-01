@@ -1,6 +1,8 @@
 # 🎯 FOCUS FIGHTER
 **A Hardcore Cybernetic Posture Tracker & Productivity HUD.**
 
+🔴 **[PLAY THE LIVE DEMO HERE](https://saharan7317.github.io/Focus-Fighter/v3-cyber-cockpit/)**
+
 Focus Fighter is a client-side AI web application that uses your webcam to monitor your posture, presence, and focus. If you slouch, look at your phone, or walk away from your desk, the system's alarms will trigger, your health bar will melt, and your screen will glitch. 
 
 Sit straight. Stay focused. Survive.
@@ -22,6 +24,7 @@ Introduces the Web Audio API to generate synthetic alarms dynamically without re
 
 ### 📁 `v3-cyber-cockpit` : The Ultimate HUD
 Transforms the app into a full-blown cybernetic dashboard with advanced tracking logic and anti-cheat mechanics.
+* **Floating Mini-Player (PiP):** Uses the native Picture-in-Picture API so you can pop the tracker out into an always-on-top window. Keep an eye on your health bar and posture grade while coding or working in other apps!
 * **Anti-Cheat:** The AI measures facial yaw (looking away) and shoulder width (leaning/walking away). The timer pauses instantly if you break alignment.
 * **Live Stats:** Tracks Peak Survival Time, total System Alerts, and assigns a live Posture Grade (S to F).
 * **The Redemption Arc:** Holding perfect posture for 15 unbroken seconds "heals" your grade by erasing past errors.
@@ -34,12 +37,12 @@ Transforms the app into a full-blown cybernetic dashboard with advanced tracking
 * **AI Vision:** MediaPipe Pose (`modelComplexity: 1`).
 * **Audio:** Native Web Audio API (`AudioContext`, `BiquadFilterNode`, `OscillatorNode`) and array buffer decoding.
 * **Rendering:** HTML5 `<canvas>` for mirrored drawing, glitch effects, and UI overlays.
-* **Zero Dependencies:** No local servers, Node modules, or backend required. Everything runs natively in the browser.
+* **Zero Dependencies:** No local servers, Node packages, or backend required. Everything runs natively in the browser.
 
 ---
 
 ## 🎮 How to Play
-Because Focus Fighter runs entirely on client-side JavaScript, you do not need to install any packages or run a local server.
+You can play the final version instantly via the **[Live Demo](https://saharan7317.github.io/Focus-Fighter/v3-cyber-cockpit/)**, or run it locally:
 
 1. Clone or download this repository.
 2. Open any of the version folders (`v1-classic`, `v2-soundboard`, or `v3-cyber-cockpit`).
